@@ -1,60 +1,142 @@
 import os
-from datetime import datetime
+import pandas as pd
 import boto3
-from botocore.exceptions import ClientError
+import tempfile
+from datetime import datetime
+import unicodedata
 
-# ==========================================
+# =========================
 # CONFIGURAÇÕES
-# ==========================================
-AWS_PROFILE = "etl_engenharia_dados"
-BUCKET_NAME = "engenharia-dados-lakehouse"
+# =========================
+AWS_PROFILE = "pos_dados"
+BUCKET_NAME = "pos-graduacao-lakehouse"
 
-LEGADO_PREFIX = "legado"
-RAW_PREFIX = "raw/base_dados"
+RAW_PREFIX = "raw/base_dados/"
+TRUSTED_PREFIX = "trusted/base_dados"
 
-FILE_NAME = "Base_Dados.xlsx"
+# =========================
+# FUNÇÃO: NORMALIZAR COLUNAS
+# =========================
+def normalize_column(col):
+    col = col.strip().lower()
+    col = unicodedata.normalize("NFKD", col)
+    col = col.encode("ascii", "ignore").decode("utf-8")
+    col = col.replace(" ", "_")
+    return col
 
-# ==========================================
-# FUNÇÕES
-# ==========================================
-def get_s3_client():
-    session = boto3.Session(profile_name=AWS_PROFILE)
-    return session.client("s3")
+# =========================
+# SESSÃO AWS
+# =========================
+session = boto3.Session(profile_name=AWS_PROFILE)
+s3 = session.client("s3")
 
-def gerar_timestamp_execucao():
-    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+# =========================
+# BUSCAR ÚLTIMO ARQUIVO RAW
+# =========================
+objects = s3.list_objects_v2(
+    Bucket=BUCKET_NAME,
+    Prefix=RAW_PREFIX
+).get("Contents", [])
 
-def copiar_legado_para_raw(s3_client, bucket, file_name):
-    timestamp = gerar_timestamp_execucao()
-    
-    origem_key = f"{LEGADO_PREFIX}/{file_name}"
-    destino_key = f"{RAW_PREFIX}/{timestamp}_{file_name}"
-    
-    print(f"[INFO] Iniciando cópia do arquivo na camada RAW:")
-    print(f"       Origem: s3://{bucket}/{origem_key}")
-    print(f"       Destino: s3://{bucket}/{destino_key}")
-    
-    try:
-        s3_client.copy_object(
-            Bucket=bucket,
-            CopySource={"Bucket": bucket, "Key": origem_key},
-            Key=destino_key
-        )
-        
-        print("[SUCCESS] Arquivo copiado com sucesso para a camada RAW")
-        print(f"[INFO] Timestamp de ingestão: {timestamp}")
-        
-    except ClientError as e:
-        print(f"[ERROR] Falha ao copiar arquivo da camada Legado para Raw")
-        raise e
+if not objects:
+    raise Exception("Nenhum arquivo encontrado na camada RAW")
 
-# ==========================================
-# EXECUÇÃO
-# ==========================================
-if __name__ == "__main__":
-    s3_client = get_s3_client()
-    copiar_legado_para_raw(
-        s3_client=s3_client,
-        bucket=BUCKET_NAME,
-        file_name=FILE_NAME
+latest_object = max(objects, key=lambda x: x["LastModified"])
+latest_key = latest_object["Key"]
+
+print("[INFO] Ultimo arquivo RAW encontrado:")
+print(f"       s3://{BUCKET_NAME}/{latest_key}")
+
+# =========================
+# DOWNLOAD DO EXCEL
+# =========================
+tmp_excel = tempfile.NamedTemporaryFile(
+    suffix=".xlsx",
+    delete=False
+).name
+
+s3.download_file(BUCKET_NAME, latest_key, tmp_excel)
+
+# =========================
+# LEITURA DO EXCEL
+# =========================
+df = pd.read_excel(tmp_excel)
+df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
+
+# =========================
+# PADRONIZAÇÃO ROBUSTA DE COLUNAS
+# =========================
+df.columns = [normalize_column(c) for c in df.columns]
+
+# =========================
+# CONVERSÃO DE DATAS (SEGURA)
+# =========================
+df["dataemissao_dt"] = pd.to_datetime(
+    df["dataemissao"],
+    errors="coerce"
+)
+
+df["datavencimento_dt"] = pd.to_datetime(
+    df["datavencimento"],
+    errors="coerce"
+)
+
+# 🔥 DATA FINAL COMO STRING (SEM AMBIGUIDADE)
+df["dataemissao"] = df["dataemissao_dt"].dt.strftime("%Y-%m-%d %H:%M:%S")
+df["datavencimento"] = df["datavencimento_dt"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
+df = df.drop(columns=["dataemissao_dt", "datavencimento_dt"])
+
+# =========================
+# TIPAGEM DE DADOS
+# =========================
+df["qtditens"] = pd.to_numeric(df["qtditens"], errors="coerce")
+df["valorunitario"] = pd.to_numeric(df["valorunitario"], errors="coerce")
+df["peso_liquido"] = pd.to_numeric(df["peso_liquido"], errors="coerce")
+
+df["nfe"] = df["nfe"].astype(str)
+df["cliente"] = df["cliente"].astype(str)
+df["vendedor"] = df["vendedor"].astype(str)
+
+# =========================
+# COLUNAS TÉCNICAS
+# =========================
+df["data_ingestao"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+# =========================
+# PARTICIONAMENTO (USANDO dataemissao_dt)
+# =========================
+df["_ano"] = pd.to_datetime(df["dataemissao"], errors="coerce").dt.year
+df["_mes"] = pd.to_datetime(df["dataemissao"], errors="coerce").dt.month
+df["_dia"] = pd.to_datetime(df["dataemissao"], errors="coerce").dt.day
+
+# =========================
+# ESCRITA PARQUET + UPLOAD
+# =========================
+tmp_dir = tempfile.mkdtemp()
+
+for (ano, mes, dia), part in df.groupby(["_ano", "_mes", "_dia"]):
+
+    part = part.drop(columns=["_ano", "_mes", "_dia"])
+
+    local_parquet = os.path.join(
+        tmp_dir,
+        f"base_dados_{ano}{mes:02d}{dia:02d}.parquet"
     )
+
+    part.to_parquet(
+        local_parquet,
+        engine="pyarrow",
+        compression="snappy",
+        index=False
+    )
+
+    s3_key = (
+        f"{TRUSTED_PREFIX}/"
+        f"ano={ano}/mes={mes}/dia={dia}/base_dados.parquet"
+    )
+
+    s3.upload_file(local_parquet, BUCKET_NAME, s3_key)
+
+print("TRUSTED GERADA COM SUCESSO")
+print(f"s3://{BUCKET_NAME}/{TRUSTED_PREFIX}")
