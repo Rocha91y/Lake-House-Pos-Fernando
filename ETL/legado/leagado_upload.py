@@ -7,7 +7,7 @@ from botocore.exceptions import ClientError
 # =========================
 BUCKET_NAME = "pos-graduacao-lakehouse"
 S3_PREFIX = "legado"
-LOCAL_BASE_PATH = r"C:\Users\Administrator\Desktop\Lakehouse"
+LOCAL_BASE_PATH = r"C:\Users\FERNANDO\Desktop\AWS\Base_dados"
 FILE_NAME = "Base_Dados.xlsx"
 AWS_PROFILE = "pos_dados"
 
