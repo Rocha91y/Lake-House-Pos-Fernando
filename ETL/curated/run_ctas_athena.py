@@ -5,7 +5,7 @@ from pathlib import Path
 # =========================
 # CONFIGURAÇÕES GERAIS
 # =========================
-AWS_PROFILE = "pos_dados"
+AWS_PROFILE = "etl_engenharia_dados"
 AWS_REGION = "us-east-1"
 
 ATHENA_DATABASE = "lakehouse_curated"
