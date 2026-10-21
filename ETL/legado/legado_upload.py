@@ -9,7 +9,7 @@ BUCKET_NAME = "pos-graduaca-lakehouse-fernando-rocha"
 S3_PREFIX = "legado"
 LOCAL_BASE_PATH = r"C:\Users\FERNANDO\Desktop\AWS\Base_dados"
 FILE_NAME = "Base_Dados.xlsx"
-AWS_PROFILE = "pos_dados"
+AWS_PROFILE = "etl_engenharia_dados"
 
 
 LOCAL_FILE_PATH = os.path.join(LOCAL_BASE_PATH, FILE_NAME)
