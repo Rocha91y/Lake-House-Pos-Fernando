@@ -4,7 +4,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 
-AWS_PROFILE = "pos_dados"
+AWS_PROFILE = "etl_engenharia_dados"
 BUCKET_NAME = "pos-graduaca-lakehouse-fernando-rocha"
 
 LEGADO_PREFIX = "legado"
