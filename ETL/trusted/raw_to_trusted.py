@@ -8,8 +8,8 @@ import unicodedata
 # =========================
 # CONFIGURAÇÕES
 # =========================
-AWS_PROFILE = "pos_dados"
-BUCKET_NAME = "pos-graduacao-lakehouse"
+AWS_PROFILE = "etl_engenharia_dados"
+BUCKET_NAME = "pos-graduaca-lakehouse-fernando-rocha"
 
 RAW_PREFIX = "raw/base_dados/"
 TRUSTED_PREFIX = "trusted/base_dados"
